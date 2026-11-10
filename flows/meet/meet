@@ -1,0 +1,71 @@
+#!/bin/bash
+# meet — one command for meeting recordings in the Obsidian vault.
+#   meet            toggle: start recording, or stop + transcribe + summarise (local LLM) + rename
+#   meet start [context…]   e.g. meet start with Anna and Ben, Acme pricing review
+#   meet stop | status
+#   meet redo <folder>   re-run transcribe + summary for an existing meeting folder
+# Config: ~/.config/automations/meet.env (see meet.env.example): where meetings go, who you are,
+# names the transcriber tends to mishear, which model summarises.
+set -u
+HERE="$(dirname "$(readlink -f "$0")")"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/automations/meet.env"
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && { set -a; . "$CONF"; set +a; }
+MEET="${MEET_DIR:-$HOME/Documents/meetings}"
+STATE="${MEET_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/meet}"; mkdir -p "$STATE"
+CUR="$STATE/.current"; LOG="$STATE/meet.log"
+note() { notify-send -a meet -i audio-input-microphone "Meeting" "$1" 2>/dev/null; echo "$1"; }
+
+recording_file() { [ -f "$CUR" ] && cat "$CUR"; }
+is_recording() { f=$(recording_file) && [ -n "$f" ] && pgrep -f "ffmpeg.*$(basename "$f")" >/dev/null; }
+
+start() {
+  if is_recording; then note "Already recording: $(basename "$(recording_file)")"; return; fi
+  STAMP=$(date +%Y-%m-%d-%H%M); D="$MEET/$STAMP"; mkdir -p "$D"
+  F="$D/$STAMP-recording.wav"
+  SRC=$(pactl get-default-source); SINK=$(pactl get-default-sink)
+  setsid nohup ffmpeg -nostdin -loglevel error -f pulse -i "$SRC" -f pulse -i "$SINK.monitor" \
+    -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0[a]" -map "[a]" -ac 1 -ar 16000 "$F" \
+    >>"$LOG" 2>&1 < /dev/null &
+  echo "$F" > "$CUR"
+  [ -n "${CTX:-}" ] && echo "$CTX" > "$D/context.txt"
+  sleep 1; is_recording && note "🔴 Recording started ($STAMP)" || note "❌ Recording failed to start, see $LOG"
+}
+
+# move a legacy recording (outside the vault) into its meeting folder; echoes the final wav path
+adopt() {
+  local F="$1"; case "$F" in /*) ;; *) F="$STATE/$F" ;; esac
+  [[ "$F" == "$MEET"/* ]] && { echo "$F"; return; }
+  local b; b=$(basename "$F" .wav); b=${b#meeting-}
+  local STAMP="${b:0:4}-${b:4:2}-${b:6:2}-${b:9:4}"
+  local D; D=$(ls -d "$MEET/$STAMP"* 2>/dev/null | head -1); D=${D:-$MEET/$STAMP}; mkdir -p "$D"
+  mv -f "$F" "$D/$STAMP-recording.wav" && echo "$D/$STAMP-recording.wav"
+}
+
+process() {  # <wav>: transcribe, summarise, rename folder
+  local F="$1"
+  note "📝 Transcribing $(basename "$F")…"
+  uv run --quiet "$HERE/transcribe.py" "$F" "${MEET_WHISPER_MODEL:-small.en}" ${MEET_LANG:-} >/dev/null || { note "❌ Transcription failed, see $LOG"; return 1; }
+  note "🧠 Summarising with local model…"
+  local D; D=$(python3 "$HERE/summarize.py" "$(dirname "$F")" ${FORCE:-}) || { note "❌ Summary failed, see $LOG"; return 1; }
+  note "✅ Saved: meetings/$(basename "$D")"
+}
+
+stop() {
+  local F; F=$(recording_file) || { note "Nothing is recording"; return; }
+  if is_recording; then pkill -INT -f "ffmpeg.*$(basename "$F")"; sleep 2; fi
+  F=$(adopt "$F")
+  note "⏹ Recording stopped, processing in background…"
+  rm -f "$CUR"
+  ( process "$F" ) >>"$LOG" 2>&1 < /dev/null &
+  disown
+}
+
+case "${1:-toggle}" in
+  toggle) is_recording && stop || start ;;
+  start) shift; CTX="$*" start ;;
+  stop) stop ;;
+  status) is_recording && echo "recording: $(recording_file)" || echo "not recording"; tail -n 5 "$LOG" 2>/dev/null || true ;;
+  redo) FORCE=--force process "$(ls "${2:?folder}"/*-recording.wav | head -1)" ;;
+  *) sed -n '2,8p' "$0" ;;
+esac

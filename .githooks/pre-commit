@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Block commits that would publish private data. Enable once per clone: git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/scripts/check-private.sh" --staged

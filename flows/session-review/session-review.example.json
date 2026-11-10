@@ -1,0 +1,16 @@
+{
+  "_readme": "Copy to ~/.config/automations/session-review.json. Routes match a session's working directory (first prefix wins); unmatched sessions use 'default'. 'backend' is a list tried in order: the first reachable one is used. Keep sensitive projects on self-hosted backends only.",
+  "routes": [
+    { "match": "~/code/work/", "kind": "work", "vault": "~/Obsidian/Work", "folder": "sessions", "backend": ["local-ollama"] },
+    { "match": "~/code/personal/", "kind": "personal", "vault": "~/Obsidian/Personal", "folder": "sessions", "backend": ["claude"] }
+  ],
+  "default": { "kind": "default", "vault": "~/Obsidian/Work", "folder": "sessions", "backend": ["local-ollama"] },
+  "backends": {
+    "local-ollama": { "type": "ollama", "url": "http://127.0.0.1:11434", "model": "qwen3:4b-instruct-2507-q4_K_M", "numCtx": 16384, "chunkChars": 30000 },
+    "team-vllm": { "type": "openai", "url": "http://your-gpu-server:8000/v1", "model": "your-model", "apiKeyEnv": "TEAM_VLLM_KEY", "chunkChars": 250000 },
+    "claude": { "type": "claude", "model": "sonnet", "chunkChars": 300000 }
+  },
+  "settleMinutes": 20,
+  "sweepDays": 3,
+  "notify": true
+}

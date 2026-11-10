@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Scan the whole tree and the commit authors before anything leaves the machine.
+exec "$(git rev-parse --show-toplevel)/scripts/check-private.sh"

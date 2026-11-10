@@ -1,0 +1,8 @@
+# Config and data never live here: config is in ~/.config/automations, outputs in your vaults.
+*.env
+!*.env.example
+__pycache__/
+node_modules/
+.current
+*.log
+*.wav
